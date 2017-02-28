@@ -132,7 +132,7 @@ SROS_OID_MAP = {
             'description':'.1.3.6.1.4.1.6527.3.1.2.14.4.7.1.7',
             'peer_group': '.1.3.6.1.4.1.6527.3.1.2.14.4.7.1.4',
             'shutdown': '.1.3.6.1.4.1.6527.3.1.2.14.4.7.1.6',
-            'bgp_state': '.1.3.6.1.4.1.6527.3.1.2.14.4.8.1.11',
+            'is_up': '.1.3.6.1.4.1.6527.3.1.2.14.4.7.1.42',
             'bgp_last_event': '.1.3.6.1.4.1.6527.3.1.2.14.4.8.1.12',
             'local_as': '.1.3.6.1.4.1.6527.3.1.2.14.4.7.1.65',
             'peer_as': '.1.3.6.1.4.1.6527.3.1.2.14.4.7.1.66',
@@ -170,6 +170,15 @@ SROS_OID_TYPES = {
             'is_up' : {
                 '1': True,
                 '2': False,
+                },
+            },
+        'bgp_peers': {
+            'is_up': {
+                '1': 'unknown',
+                '2': True,
+                '3': False,
+                '4': 'transition',
+                '5': 'disabled',
                 },
             },
         'svc_type': {
@@ -293,7 +302,7 @@ class SrosDriver(object):
         self.interface_map = {}
         self.snmp_device = None
         self.cli_device = None
-        self.netmiko_optional_args={'global_delay_factor':3}
+        self.netmiko_optional_args={'global_delay_factor':2}
 
     def open(self):
         if 'MIBDIRS' not in os.environ:
@@ -359,8 +368,9 @@ class SrosDriver(object):
         return dict(info)
 
     def close(self):
-        if hasattr(self, cli_device):
-            self.cli_device.disconnect()
+        if hasattr(self, 'cli_device'):
+            if hasattr(self.cli_device, 'disconnect'):
+                self.cli_device.disconnect()
 
     def _send_command(self, command):
         output = self.cli_device.send_command(command)
@@ -374,10 +384,13 @@ class SrosDriver(object):
                                         password=self.password,
                                         **self.netmiko_optional_args)
         cli_output = dict()
-        for cmd in commands:
-            output = self._send_command(cmd)
-            cli_output.setdefault(cmd, {})
-            cli_output[cmd] = output
+        if not isinstance(commands, list):
+            commands = [ commands ]
+        if isinstance(commands, list):
+            for cmd in commands:
+                output = self._send_command(cmd)
+                cli_output.setdefault(cmd, {})
+                cli_output[cmd] = output
 
         return cli_output
 
@@ -507,28 +520,38 @@ class SrosDriver(object):
 import click
 
 @click.command()
-@click.option('--host','-h', help='hostname/IP of NOKIA 7750 node')
+@click.option('--host','-h', multiple=True, help='hostname/IP of NOKIA 7750 node, multiple -h options allowed')
 @click.option('--community', default='public', help='SNMPv2 community string with read-only access')
 @click.option('--username', default='admin', help='CLI username')
 @click.option('--password', default='admin', help='CLI password')
-@click.option('--action','-a', multiple=True, help='action, e.g. get_facts')
-def sros(host, community, username, password, action):
+@click.option('--getter','-g', multiple=True, help='getter function, e.g. get_facts')
+@click.option('--command','-c', help='command to execute on specified node' )
+def sros(host, community, username, password, getter, command):
     if not host:
         print("host arg missing. Try --help")
         exit()
     args=dict()
     args['community'] = community
-    sros = SrosDriver(host, username, password, 20, args)
-    sros.open()
-    for a in action:
-        if hasattr(sros, a):
-            out = getattr(sros, a)()
-            pprint.pprint(out)
-        else:
-            print('Non-supported action:', a)
-            print('list of supported actions:', [ method for method in dir(sros) if callable(getattr(sros, method)) and method.startswith(('get_', 'cli')) ])
-    exit()
-
+    for h in host:
+        print('Host:', h)
+        sros = SrosDriver(h, username, password, 20, args)
+        sros.open()
+        import pprint
+        for g in getter:
+            if hasattr(sros, g):
+                out = getattr(sros, g)()
+                pprint.pprint(out)
+            else:
+                print('Non-supported getter:', g)
+                print('list of supported getters:', [ method for method in dir(sros) if callable(getattr(sros, method)) and method.startswith(('get_')) ])
+                exit()
+        if command:
+            cli_cmd = command.split(';')
+            out = sros.cli(cli_cmd)
+            for cmd in out:
+                print('Command:', cmd)
+                print(out[cmd])
+        sros.close()
 if __name__ == '__main__' :
     sros()
 
