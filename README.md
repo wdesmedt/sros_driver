@@ -25,6 +25,7 @@ CLI screen-scaping is error-prone and sensitive to changes between minor release
 - SROS MIBs - these get distributed with the SROS software and are also provided in this repo
 - environment vars. MIBDIRS must be specified and set to the directory that holds the SROS MIBS, e.g.:
   `MIBDIRS=/usr/share/snmp/mibs:/home/vagrant/MIB`
+- netmiko Python library: used for CLI over SSH interaction with the SROS-node. See https://github.com/ktbyers/netmiko
   
 # Examples
 ```
