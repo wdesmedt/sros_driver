@@ -44,7 +44,7 @@ def decode_ip(hex_string_list):
                 else:
                     ipv6.append('%x' % ord(b1))
                 ipv6.append(':')
-            decoded.append(unicode(ipaddress.ip_address(''.join(ipv6).strip(':'))))
+            decoded.append(unicode(ipaddress.ip_address(unicode(''.join(ipv6).strip(':')))))
     return decoded
 
 def decode_rd(hex_string):
@@ -96,13 +96,20 @@ SROS_OID_MAP = {
         'lag_members': '.1.3.6.1.4.1.6527.3.1.2.15.5.1.1',
         'vrf': {
             'name': '.1.3.6.1.4.1.6527.3.1.2.3.1.1.4',
+            'svc_name': 'service:name@.1.3.6.1.4.1.6527.3.1.2.3.1.1.29',
             'svcid': '.1.3.6.1.4.1.6527.3.1.2.3.1.1.29',
             'as': '.1.3.6.1.4.1.6527.3.1.2.3.1.1.59',
             'routerid': '.1.3.6.1.4.1.6527.3.1.2.3.1.1.16',
             'rd': '.1.3.6.1.4.1.6527.3.1.2.3.1.1.19',
             },
+        'service': {
+            'name': '.1.3.6.1.4.1.6527.3.1.2.4.2.2.1.29',
+            'svc_type': '.1.3.6.1.4.1.6527.3.1.2.4.2.2.1.3',
+            'description': '.1.3.6.1.4.1.6527.3.1.2.4.2.2.1.6',
+            'is_enabled': '.1.3.6.1.4.1.6527.3.1.2.4.2.2.1.8',
+            'is_up': '.1.3.6.1.4.1.6527.3.1.2.4.2.2.1.9',
+            },
         'vr_ifs': {
-            '_index': 2,
             'name': '.1.3.6.1.4.1.6527.3.1.2.3.4.1.4',
             'port': 'port:name@.1.3.6.1.4.1.6527.3.1.2.3.4.1.5',
             'mac': '.1.3.6.1.4.1.6527.3.1.2.3.4.1.11',
@@ -114,7 +121,7 @@ SROS_OID_MAP = {
             'global_ifindex': '.1.3.6.1.4.1.6527.3.1.2.3.4.1.63',
             'ip_address': 'vr_addr:address@_index',
             'pref_len': 'vr_addr:pref_len@_index',
-            'inet_type': 'vr_addr:inet_type@_index',
+#            'inet_type': 'vr_addr:inet_type@_index',
             },
         'vr_addr': {
             'address': '.1.3.6.1.4.1.6527.3.1.2.3.6.1.9',
@@ -155,6 +162,24 @@ SROS_OID_VALUE_DECODERS = {
         }
 
 SROS_OID_TYPES = {
+        'service': {
+            'is_enabled': {
+                '1': True,
+                '2': False,
+                },
+            'is_up' : {
+                '1': True,
+                '2': False,
+                },
+            },
+        'svc_type': {
+            '0':    'unknown',
+            '1':    'epipe',
+            '3':    'vpls',
+            '4':    'vprn',
+            '5':    'ies',
+            '6':    'mirror',
+            },
         'lacp_enable': {
             '1':    True,
             '2':    False,
@@ -285,49 +310,53 @@ class SrosDriver(object):
 
 
     def _build_dict(self, table, key):
-        key_entry = [ (x.value, x.oid) for x in self.snmp_device.walk(SROS_OID_MAP[table][key]) ]
-        index=[]
-        if '_index' in SROS_OID_MAP[table]:
-            index = ['.'.join(x[1].split('.')[-SROS_OID_MAP[table]['_index']:])  for x in key_entry ]
-        rows = {}
-        for attrib, oid in SROS_OID_MAP[table].items():
-            if attrib == key:
-                continue
-            if attrib.startswith('_'):
-                continue
-            m = re.search('^([^:]+):([^@]+)@(.+)$',oid)
+        entries = dict()
+        for attrib in SROS_OID_MAP[table]:
+            m = re.search('^([^:]+):([^@]+)@(.+)$', SROS_OID_MAP[table][attrib] )
             if m:
-                rows[attrib] = []
                 (f_table, f_key, oid) = m.groups()
-                f_key_values = self.snmp_device.walk(SROS_OID_MAP[f_table][f_key])
+                f_entries = self.snmp_device.walk(SROS_OID_MAP[f_table][f_key])
+                entries[attrib] = []
                 if oid == '_index':
-                    for idx in index:
-                        oid_values=[]
-                        for f_key in f_key_values:
-                            if re.search(idx + '(\.[^\.]+)$', f_key.oid):
-                                oid_values.append(f_key.value)
-                        rows[attrib].append(oid_values)
-                else:
-                    for oid_inst in self.snmp_device.walk(oid):
-                        oid_values=[]
-                        if not oid_inst.value == u'0':
-                            for f_key in f_key_values:
-                                if f_key.oid.endswith(oid_inst.value):
-                                    oid_values.append(f_key.value)
-                        rows[attrib].append(oid_values)
-            else:
-                rows[attrib] = [ x.value for x in self.snmp_device.walk(oid) ]
-        rec = {}
-        for key_value, key_oid in key_entry:
-            rec[key_value] = {}
-            for attrib in rows:
-                value = rows[attrib].pop(0)
-                if attrib in SROS_OID_VALUE_DECODERS:
-                    value = SROS_OID_VALUE_DECODERS[attrib](value)
-                elif attrib in SROS_OID_TYPES and value in SROS_OID_TYPES[attrib]:
-                    value = SROS_OID_TYPES[attrib][value]
-                rec[key_value][attrib] = value
-        return rec
+                    ''' value of attrib in f_table, index from entry taken from key-attrib in param-list
+                    remote entry's oid-index must contain oid_index of instances of local attribs in 'table'
+                    '''
+                    for entry in self.snmp_device.walk(SROS_OID_MAP[table][key]):
+                        found_mach = False
+                        f_matches = []
+                        for f_entry in f_entries:
+                            if entry.oid_index in f_entry.oid_index:
+                                f_matches.append(f_entry.value)
+                        entries[attrib].append(f_matches)
+                else: # oid contains oid_index of foreign attribute f_key in f_table
+                    for entry in self.snmp_device.walk(oid):
+                        found_match = False
+                        for f_entry in f_entries:
+                            if f_entry.oid_index.endswith(entry.value):
+                                entries[attrib].append(f_entry.value)
+                                found_match = True
+                                break
+                        if not found_match:
+                            entries[attrib].append([]) # append empty list to ensure order/quantity with 'native' table attribs
+            else: # regular entry
+                entries[attrib] = [ x.value for x in self.snmp_device.walk(SROS_OID_MAP[table][attrib]) ]
+
+        info = defaultdict(dict)
+        while (len(entries[key]) > 0):
+            key_inst = entries[key].pop(0)
+            for attrib in entries:
+                if attrib == key: continue
+                attrib_value = entries[attrib].pop(0)
+                if attrib_value:
+                    if attrib in SROS_OID_VALUE_DECODERS:
+                        attrib_value = SROS_OID_VALUE_DECODERS[attrib](attrib_value)
+                    elif table in SROS_OID_TYPES and attrib in SROS_OID_TYPES[table] and attrib_value in SROS_OID_TYPES[table][attrib]:
+                        attrib_value = SROS_OID_TYPES[table][attrib][attrib_value]
+                    elif attrib in SROS_OID_TYPES and attrib_value in SROS_OID_TYPES[attrib]:
+                        attrib_value = SROS_OID_TYPES[attrib][attrib_value]
+                info[key_inst][attrib] = attrib_value
+
+        return dict(info)
 
     def close(self):
         if hasattr(self, cli_device):
@@ -397,14 +426,14 @@ class SrosDriver(object):
                 lldp_info[port_name][attrib] = entry.value
         return lldp_info
 
+    def get_services(self):
+        return self._build_dict('service', 'name')
+
     def get_vrfs(self):
         return self._build_dict('vrf', 'name')
 
     def get_interfaces(self):
         return self._build_dict('vr_ifs', 'name')
-
-    def get_ips(self):
-        return self._build_dict('vr_addr', 'address')
 
     def get_bgp_neighbors(self):
         entries={}
@@ -478,7 +507,7 @@ class SrosDriver(object):
 import click
 
 @click.command()
-@click.option('--host', help='hostname/IP of NOKIA 7750 node')
+@click.option('--host','-h', help='hostname/IP of NOKIA 7750 node')
 @click.option('--community', default='public', help='SNMPv2 community string with read-only access')
 @click.option('--username', default='admin', help='CLI username')
 @click.option('--password', default='admin', help='CLI password')
