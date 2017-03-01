@@ -302,7 +302,7 @@ class SrosDriver(object):
         self.interface_map = {}
         self.snmp_device = None
         self.cli_device = None
-        self.netmiko_optional_args={'global_delay_factor':2}
+        self.netmiko_optional_args={'global_delay_factor':3}
 
     def open(self):
         if 'MIBDIRS' not in os.environ:
@@ -341,7 +341,7 @@ class SrosDriver(object):
                     for entry in self.snmp_device.walk(oid):
                         found_match = False
                         for f_entry in f_entries:
-                            if f_entry.oid_index.endswith(entry.value):
+                            if entry.value in f_entry.oid_index.split('.'):
                                 entries[attrib].append(f_entry.value)
                                 found_match = True
                                 break
